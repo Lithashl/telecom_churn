@@ -1,5 +1,3 @@
-PRAGMA foreign_keys = ON;
-
 -- Main customer dataset: one row per customer from the Telco Customer Churn dataset.
 CREATE TABLE IF NOT EXISTS customers (
     customer_id TEXT PRIMARY KEY,
@@ -83,12 +81,12 @@ CREATE INDEX IF NOT EXISTS idx_customers_ml_churn ON customers_ml(churn);
 
 -- Each prediction is stored separately so that model history can be evaluated.
 CREATE TABLE IF NOT EXISTS churn_predictions (
-    prediction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prediction_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     customer_id TEXT NOT NULL,
     churn_probability REAL NOT NULL CHECK (churn_probability >= 0 AND churn_probability <= 1),
     predicted_churn TEXT NOT NULL CHECK (predicted_churn IN ('Yes','No')),
     model_version TEXT,
-    predicted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    predicted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
 );
 
@@ -98,7 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_predictions_time ON churn_predictions(predicted_a
 -- Metadata for provider's official plan comparison / terms-of-service documents.
 -- The actual PDF must come from the chosen provider; do not populate with invented terms.
 CREATE TABLE IF NOT EXISTS plan_documents (
-    document_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     provider_name TEXT NOT NULL,
     document_title TEXT NOT NULL,
     document_type TEXT NOT NULL,
@@ -106,17 +104,17 @@ CREATE TABLE IF NOT EXISTS plan_documents (
     source_url TEXT,
     version_label TEXT,
     effective_date TEXT,
-    ingested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ingested_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Minimal conversation audit trail. Avoid storing unnecessary sensitive personal data.
 CREATE TABLE IF NOT EXISTS chat_history (
-    chat_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     customer_id TEXT,
     user_question TEXT NOT NULL,
     assistant_answer TEXT,
     source_document_id INTEGER,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (customer_id) REFERENCES customers(customer_id),
     FOREIGN KEY (source_document_id) REFERENCES plan_documents(document_id)
 );

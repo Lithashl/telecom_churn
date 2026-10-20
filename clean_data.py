@@ -1,13 +1,25 @@
 from pathlib import Path
 import csv
-import sqlite3
+import getpass
+import os
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # Builds `customers_ml` from the raw `customers` table: handles the one known data-quality
 # issue (null total_charges for brand-new customers) and encodes categoricals so the table
 # is ready for model training. `customers` itself is never modified or deleted from.
-DB_FILE = Path("telecom_churn.db")
 SCHEMA_FILE = Path("schema.sql")
 CSV_EXPORT_FILE = Path("customers_ml.csv")
+
+# Local PostgreSQL connection. Override with env vars if your DBeaver connection differs.
+DB_PARAMS = dict(
+    host=os.environ.get("PGHOST", "localhost"),
+    port=os.environ.get("PGPORT", "5432"),
+    dbname=os.environ.get("PGDATABASE", "telecom_churn"),
+    user=os.environ.get("PGUSER", getpass.getuser()),
+    password=os.environ.get("PGPASSWORD", ""),
+)
 
 YES_NO_FIELDS = {
     "partner": "has_partner",
@@ -119,35 +131,42 @@ def build_ml_row(row):
 def main():
     if not SCHEMA_FILE.exists():
         raise FileNotFoundError("schema.sql must be in the same folder as this script.")
-    if not DB_FILE.exists():
-        raise FileNotFoundError("telecom_churn.db not found. Run import_dataset.py first.")
 
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.executescript(SCHEMA_FILE.read_text(encoding="utf-8"))
+    conn = psycopg2.connect(**DB_PARAMS)
+    cur = conn.cursor()
+    cur.execute(SCHEMA_FILE.read_text(encoding="utf-8"))
 
-    source_rows = conn.execute("SELECT * FROM customers").fetchall()
+    dict_cur = conn.cursor(cursor_factory=RealDictCursor)
+    dict_cur.execute("SELECT * FROM customers")
+    source_rows = dict_cur.fetchall()
+    dict_cur.close()
+    if not source_rows:
+        raise RuntimeError("customers table is empty. Run import_dataset.py first.")
     ml_rows = [build_ml_row(row) for row in source_rows]
 
     columns = list(ml_rows[0].keys())
-    placeholders = ",".join(["?"] * len(columns))
+    placeholders = ",".join(["%s"] * len(columns))
     columns_sql = ",".join(columns)
-    sql = f"INSERT OR REPLACE INTO customers_ml ({columns_sql}) VALUES ({placeholders})"
-    conn.executemany(sql, [[r[c] for c in columns] for r in ml_rows])
+    update_sql = ",".join(f"{c} = EXCLUDED.{c}" for c in columns if c != "customer_id")
+    sql = (
+        f"INSERT INTO customers_ml ({columns_sql}) VALUES ({placeholders}) "
+        f"ON CONFLICT (customer_id) DO UPDATE SET {update_sql}"
+    )
+    cur.executemany(sql, [[r[c] for c in columns] for r in ml_rows])
     conn.commit()
 
     # Validation report.
-    ml_count = conn.execute("SELECT COUNT(*) FROM customers_ml").fetchone()[0]
-    null_columns = [c for c in columns if conn.execute(
-        f"SELECT COUNT(*) FROM customers_ml WHERE {c} IS NULL"
-    ).fetchone()[0] > 0]
-    imputed_count = conn.execute(
-        "SELECT COUNT(*) FROM customers_ml WHERE total_charges_was_imputed = 1"
-    ).fetchone()[0]
-    churn_counts = [tuple(r) for r in conn.execute(
-        "SELECT churn, COUNT(*) FROM customers_ml GROUP BY churn ORDER BY churn"
-    ).fetchall()]
+    cur.execute("SELECT COUNT(*) FROM customers_ml")
+    ml_count = cur.fetchone()[0]
+    null_columns = []
+    for c in columns:
+        cur.execute(f"SELECT COUNT(*) FROM customers_ml WHERE {c} IS NULL")
+        if cur.fetchone()[0] > 0:
+            null_columns.append(c)
+    cur.execute("SELECT COUNT(*) FROM customers_ml WHERE total_charges_was_imputed = 1")
+    imputed_count = cur.fetchone()[0]
+    cur.execute("SELECT churn, COUNT(*) FROM customers_ml GROUP BY churn ORDER BY churn")
+    churn_counts = cur.fetchall()
 
     with CSV_EXPORT_FILE.open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
@@ -155,6 +174,7 @@ def main():
         for r in ml_rows:
             writer.writerow([r[c] for c in columns])
 
+    cur.close()
     conn.close()
 
     print(f"customers rows: {len(source_rows)}; customers_ml rows: {ml_count}")
