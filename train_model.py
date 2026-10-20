@@ -40,7 +40,7 @@ def main():
     if "churn" not in df.columns:
         raise ValueError("Kolom churn tidak ditemukan.")
 
-# Target tdk boleh jdi fitur prediksi.
+# Target tdk boleh jdi fitur prediksi (kemungkinan bisa data leakage?).
 # customer_id adlh identifier, bkn fitur prediksi.
 # tenure_group tdk dipakai krna tenure_months sdh ada.
     excluded = ["churn", "customer_id", "tenure_group"]
