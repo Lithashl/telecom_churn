@@ -5,7 +5,7 @@ from pathlib import Path
 import joblib
 import pandas as pd
 
-MODEL_FILE = Path("churn_models.joblib")
+MODEL_FILE = Path("churn_model.joblib")
 DATA_FILE = Path("customers_ml.csv")
 
 
